@@ -1,15 +1,43 @@
+import { db } from '../db';
+import { assetsTable, simulatedTradesTable } from '../db/schema';
 import { type ExecuteTradeInput, type SimulatedTrade } from '../schema';
+import { eq } from 'drizzle-orm';
 
 export async function executeTrade(input: ExecuteTradeInput): Promise<SimulatedTrade> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is executing a simulated trade at the current market price.
-    // It should validate the input, get the current asset price, create the simulated trade record, and return the trade details.
-    return Promise.resolve({
-        id: 1, // Placeholder ID
+  try {
+    // First, verify that the asset exists and get its current price
+    const assets = await db.select()
+      .from(assetsTable)
+      .where(eq(assetsTable.id, input.asset_id))
+      .execute();
+
+    if (assets.length === 0) {
+      throw new Error(`Asset with ID ${input.asset_id} not found`);
+    }
+
+    const asset = assets[0];
+    const currentPrice = parseFloat(asset.current_price);
+
+    // Create the simulated trade record
+    const result = await db.insert(simulatedTradesTable)
+      .values({
         asset_id: input.asset_id,
         trade_type: input.trade_type,
-        quantity: input.quantity,
-        price: 100.00, // Placeholder current price
-        executed_at: new Date()
-    } as SimulatedTrade);
+        quantity: input.quantity.toString(), // Convert number to string for numeric column
+        price: currentPrice.toString() // Convert number to string for numeric column
+      })
+      .returning()
+      .execute();
+
+    // Convert numeric fields back to numbers before returning
+    const trade = result[0];
+    return {
+      ...trade,
+      quantity: parseFloat(trade.quantity), // Convert string back to number
+      price: parseFloat(trade.price) // Convert string back to number
+    };
+  } catch (error) {
+    console.error('Trade execution failed:', error);
+    throw error;
+  }
 }

@@ -1,32 +1,29 @@
 import { db } from '../db';
-import { signalsTable, tradersTable } from '../db/schema';
+import { signalsTable, assetsTable } from '../db/schema';
 import { type CreateSignalInput, type Signal } from '../schema';
 import { eq } from 'drizzle-orm';
 
 export const createSignal = async (input: CreateSignalInput): Promise<Signal> => {
   try {
-    // Verify that the trader exists
-    const trader = await db.select()
-      .from(tradersTable)
-      .where(eq(tradersTable.id, input.trader_id))
+    // First, verify that the referenced asset exists
+    const asset = await db.select()
+      .from(assetsTable)
+      .where(eq(assetsTable.id, input.asset_id))
       .execute();
 
-    if (trader.length === 0) {
-      throw new Error('Trader not found');
+    if (asset.length === 0) {
+      throw new Error(`Asset with id ${input.asset_id} does not exist`);
     }
 
     // Insert signal record
     const result = await db.insert(signalsTable)
       .values({
-        trader_id: input.trader_id,
-        symbol: input.symbol,
-        asset_type: input.asset_type,
+        asset_id: input.asset_id,
         signal_type: input.signal_type,
-        entry_price: input.entry_price.toString(), // Convert number to string for numeric column
-        stop_loss: input.stop_loss ? input.stop_loss.toString() : null,
-        take_profit: input.take_profit ? input.take_profit.toString() : null,
-        description: input.description || null,
-        expires_at: input.expires_at || null
+        target_price: input.target_price.toString(), // Convert number to string for numeric column
+        quantity: input.quantity.toString(), // Convert number to string for numeric column
+        description: input.description,
+        is_active: input.is_active // Boolean column - no conversion needed
       })
       .returning()
       .execute();
@@ -35,9 +32,8 @@ export const createSignal = async (input: CreateSignalInput): Promise<Signal> =>
     const signal = result[0];
     return {
       ...signal,
-      entry_price: parseFloat(signal.entry_price),
-      stop_loss: signal.stop_loss ? parseFloat(signal.stop_loss) : null,
-      take_profit: signal.take_profit ? parseFloat(signal.take_profit) : null
+      target_price: parseFloat(signal.target_price), // Convert string back to number
+      quantity: parseFloat(signal.quantity) // Convert string back to number
     };
   } catch (error) {
     console.error('Signal creation failed:', error);

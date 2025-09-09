@@ -1,8 +1,28 @@
+import { db } from '../db';
+import { copyTradersTable } from '../db/schema';
 import { type DeleteByIdInput } from '../schema';
+import { eq } from 'drizzle-orm';
 
-export async function deleteCopyTrader(input: DeleteByIdInput): Promise<{ success: boolean }> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is deleting a copy trader from the database.
-    // It should validate the input, check if the copy trader exists, and confirm deletion.
-    return Promise.resolve({ success: true });
-}
+export const deleteCopyTrader = async (input: DeleteByIdInput): Promise<{ success: boolean }> => {
+  try {
+    // Check if copy trader exists before deletion
+    const existingTrader = await db.select()
+      .from(copyTradersTable)
+      .where(eq(copyTradersTable.id, input.id))
+      .execute();
+
+    if (existingTrader.length === 0) {
+      throw new Error(`Copy trader with id ${input.id} not found`);
+    }
+
+    // Delete the copy trader
+    await db.delete(copyTradersTable)
+      .where(eq(copyTradersTable.id, input.id))
+      .execute();
+
+    return { success: true };
+  } catch (error) {
+    console.error('Copy trader deletion failed:', error);
+    throw error;
+  }
+};

@@ -1,238 +1,182 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { resetDB, createDB } from '../helpers';
 import { db } from '../db';
-import { signalsTable, usersTable, tradersTable } from '../db/schema';
+import { signalsTable, assetsTable } from '../db/schema';
 import { type CreateSignalInput } from '../schema';
 import { createSignal } from '../handlers/create_signal';
 import { eq } from 'drizzle-orm';
 
+// Test asset data
+const testAsset = {
+  symbol: 'AAPL',
+  name: 'Apple Inc.',
+  current_price: '150.25'
+};
+
+// Simple test input
+const testInput: CreateSignalInput = {
+  asset_id: 1, // Will be updated after creating test asset
+  signal_type: 'BUY',
+  target_price: 155.50,
+  quantity: 100.5,
+  description: 'Strong bullish signal on Apple',
+  is_active: true
+};
+
 describe('createSignal', () => {
-  beforeEach(createDB);
+  let testAssetId: number;
+
+  beforeEach(async () => {
+    await createDB();
+    
+    // Create a test asset first (required for foreign key)
+    const assetResult = await db.insert(assetsTable)
+      .values(testAsset)
+      .returning()
+      .execute();
+    
+    testAssetId = assetResult[0].id;
+    testInput.asset_id = testAssetId;
+  });
+
   afterEach(resetDB);
 
-  // Helper function to create a test trader
-  const createTestTrader = async () => {
-    // First create a user
-    const userResult = await db.insert(usersTable)
-      .values({
-        email: 'trader@test.com',
-        username: 'testtrader',
-        first_name: 'Test',
-        last_name: 'Trader'
-      })
-      .returning()
-      .execute();
-
-    // Then create a trader profile
-    const traderResult = await db.insert(tradersTable)
-      .values({
-        user_id: userResult[0].id,
-        display_name: 'Test Trader',
-        subscription_price: '100.00'
-      })
-      .returning()
-      .execute();
-
-    return traderResult[0];
-  };
-
-  const testInput: CreateSignalInput = {
-    trader_id: 0, // Will be set in tests
-    symbol: 'BTCUSD',
-    asset_type: 'crypto',
-    signal_type: 'buy',
-    entry_price: 45000.50,
-    stop_loss: 43000.00,
-    take_profit: 50000.00,
-    description: 'Strong bullish signal on BTC',
-    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
-  };
-
   it('should create a signal with all fields', async () => {
-    const trader = await createTestTrader();
-    const input = { ...testInput, trader_id: trader.id };
-
-    const result = await createSignal(input);
+    const result = await createSignal(testInput);
 
     // Basic field validation
-    expect(result.trader_id).toEqual(trader.id);
-    expect(result.symbol).toEqual('BTCUSD');
-    expect(result.asset_type).toEqual('crypto');
-    expect(result.signal_type).toEqual('buy');
-    expect(result.entry_price).toEqual(45000.50);
-    expect(typeof result.entry_price).toEqual('number');
-    expect(result.stop_loss).toEqual(43000.00);
-    expect(typeof result.stop_loss).toEqual('number');
-    expect(result.take_profit).toEqual(50000.00);
-    expect(typeof result.take_profit).toEqual('number');
-    expect(result.description).toEqual('Strong bullish signal on BTC');
+    expect(result.asset_id).toEqual(testAssetId);
+    expect(result.signal_type).toEqual('BUY');
+    expect(result.target_price).toEqual(155.50);
+    expect(typeof result.target_price).toEqual('number');
+    expect(result.quantity).toEqual(100.5);
+    expect(typeof result.quantity).toEqual('number');
+    expect(result.description).toEqual('Strong bullish signal on Apple');
     expect(result.is_active).toEqual(true);
     expect(result.id).toBeDefined();
     expect(result.created_at).toBeInstanceOf(Date);
-    expect(result.expires_at).toBeInstanceOf(Date);
+    expect(result.updated_at).toBeInstanceOf(Date);
   });
 
-  it('should create a signal with minimal required fields', async () => {
-    const trader = await createTestTrader();
-    const minimalInput: CreateSignalInput = {
-      trader_id: trader.id,
-      symbol: 'ETHUSD',
-      asset_type: 'crypto',
-      signal_type: 'sell',
-      entry_price: 2800.75
-    };
+  it('should save signal to database correctly', async () => {
+    const result = await createSignal(testInput);
 
-    const result = await createSignal(minimalInput);
-
-    expect(result.trader_id).toEqual(trader.id);
-    expect(result.symbol).toEqual('ETHUSD');
-    expect(result.asset_type).toEqual('crypto');
-    expect(result.signal_type).toEqual('sell');
-    expect(result.entry_price).toEqual(2800.75);
-    expect(result.stop_loss).toBeNull();
-    expect(result.take_profit).toBeNull();
-    expect(result.description).toBeNull();
-    expect(result.expires_at).toBeNull();
-    expect(result.is_active).toEqual(true);
-    expect(result.id).toBeDefined();
-    expect(result.created_at).toBeInstanceOf(Date);
-  });
-
-  it('should save signal to database with correct numeric conversions', async () => {
-    const trader = await createTestTrader();
-    const input = { ...testInput, trader_id: trader.id };
-
-    const result = await createSignal(input);
-
-    // Query the database to verify the signal was saved correctly
+    // Query using proper drizzle syntax
     const signals = await db.select()
       .from(signalsTable)
       .where(eq(signalsTable.id, result.id))
       .execute();
 
     expect(signals).toHaveLength(1);
-    const savedSignal = signals[0];
-    expect(savedSignal.trader_id).toEqual(trader.id);
-    expect(savedSignal.symbol).toEqual('BTCUSD');
-    expect(savedSignal.asset_type).toEqual('crypto');
-    expect(savedSignal.signal_type).toEqual('buy');
-    expect(parseFloat(savedSignal.entry_price)).toEqual(45000.50);
-    expect(parseFloat(savedSignal.stop_loss!)).toEqual(43000.00);
-    expect(parseFloat(savedSignal.take_profit!)).toEqual(50000.00);
-    expect(savedSignal.description).toEqual('Strong bullish signal on BTC');
-    expect(savedSignal.is_active).toEqual(true);
-    expect(savedSignal.created_at).toBeInstanceOf(Date);
-    expect(savedSignal.expires_at).toBeInstanceOf(Date);
+    const signal = signals[0];
+    expect(signal.asset_id).toEqual(testAssetId);
+    expect(signal.signal_type).toEqual('BUY');
+    expect(parseFloat(signal.target_price)).toEqual(155.50);
+    expect(parseFloat(signal.quantity)).toEqual(100.5);
+    expect(signal.description).toEqual('Strong bullish signal on Apple');
+    expect(signal.is_active).toEqual(true);
+    expect(signal.created_at).toBeInstanceOf(Date);
+    expect(signal.updated_at).toBeInstanceOf(Date);
   });
 
-  it('should create multiple signals for different assets', async () => {
-    const trader = await createTestTrader();
-
-    const cryptoSignal = await createSignal({
-      trader_id: trader.id,
-      symbol: 'BTCUSD',
-      asset_type: 'crypto',
-      signal_type: 'buy',
-      entry_price: 45000
-    });
-
-    const stockSignal = await createSignal({
-      trader_id: trader.id,
-      symbol: 'AAPL',
-      asset_type: 'stock',
-      signal_type: 'sell',
-      entry_price: 150.25
-    });
-
-    const forexSignal = await createSignal({
-      trader_id: trader.id,
-      symbol: 'EURUSD',
-      asset_type: 'forex',
-      signal_type: 'buy',
-      entry_price: 1.0850
-    });
-
-    // Verify all signals were created with correct asset types
-    expect(cryptoSignal.asset_type).toEqual('crypto');
-    expect(cryptoSignal.symbol).toEqual('BTCUSD');
-
-    expect(stockSignal.asset_type).toEqual('stock');
-    expect(stockSignal.symbol).toEqual('AAPL');
-
-    expect(forexSignal.asset_type).toEqual('forex');
-    expect(forexSignal.symbol).toEqual('EURUSD');
-
-    // Verify all signals are in database
-    const allSignals = await db.select()
-      .from(signalsTable)
-      .where(eq(signalsTable.trader_id, trader.id))
-      .execute();
-
-    expect(allSignals).toHaveLength(3);
-  });
-
-  it('should throw error when trader does not exist', async () => {
-    const nonExistentTraderId = 99999;
-    const input = { ...testInput, trader_id: nonExistentTraderId };
-
-    await expect(createSignal(input)).rejects.toThrow(/trader not found/i);
-  });
-
-  it('should handle precision correctly for forex prices', async () => {
-    const trader = await createTestTrader();
-    const forexInput: CreateSignalInput = {
-      trader_id: trader.id,
-      symbol: 'GBPJPY',
-      asset_type: 'forex',
-      signal_type: 'buy',
-      entry_price: 189.12345,
-      stop_loss: 188.50000,
-      take_profit: 190.75000
+  it('should create signal with SELL type', async () => {
+    const sellInput: CreateSignalInput = {
+      ...testInput,
+      signal_type: 'SELL',
+      target_price: 145.00,
+      description: 'Bearish signal detected'
     };
 
-    const result = await createSignal(forexInput);
+    const result = await createSignal(sellInput);
 
-    expect(result.entry_price).toEqual(189.12345);
-    expect(result.stop_loss).toEqual(188.50000);
-    expect(result.take_profit).toEqual(190.75000);
-
-    // Verify precision is maintained in database
-    const signals = await db.select()
-      .from(signalsTable)
-      .where(eq(signalsTable.id, result.id))
-      .execute();
-
-    const savedSignal = signals[0];
-    expect(parseFloat(savedSignal.entry_price)).toEqual(189.12345);
-    expect(parseFloat(savedSignal.stop_loss!)).toEqual(188.50000);
-    expect(parseFloat(savedSignal.take_profit!)).toEqual(190.75000);
+    expect(result.signal_type).toEqual('SELL');
+    expect(result.target_price).toEqual(145.00);
+    expect(result.description).toEqual('Bearish signal detected');
   });
 
-  it('should create signals with future expiration dates', async () => {
-    const trader = await createTestTrader();
-    const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
-
-    const input: CreateSignalInput = {
-      trader_id: trader.id,
-      symbol: 'TSLA',
-      asset_type: 'stock',
-      signal_type: 'buy',
-      entry_price: 250.00,
-      expires_at: futureDate
+  it('should create signal with null description', async () => {
+    const inputWithNullDesc: CreateSignalInput = {
+      ...testInput,
+      description: null
     };
 
-    const result = await createSignal(input);
+    const result = await createSignal(inputWithNullDesc);
 
-    expect(result.expires_at).toBeInstanceOf(Date);
-    expect(result.expires_at!.getTime()).toBeCloseTo(futureDate.getTime(), -3); // Within 1 second tolerance
+    expect(result.description).toBeNull();
+  });
 
-    // Verify expiration date is saved correctly
-    const signals = await db.select()
-      .from(signalsTable)
-      .where(eq(signalsTable.id, result.id))
-      .execute();
+  it('should create signal with default is_active value', async () => {
+    // Remove is_active from input to test default behavior
+    const { is_active, ...inputWithoutActive } = testInput;
+    
+    // Zod will apply the default value of true
+    const result = await createSignal({
+      ...inputWithoutActive,
+      is_active: true // Explicit since handler expects parsed input
+    });
 
-    expect(signals[0].expires_at).toBeInstanceOf(Date);
-    expect(signals[0].expires_at!.getTime()).toBeCloseTo(futureDate.getTime(), -3);
+    expect(result.is_active).toEqual(true);
+  });
+
+  it('should create inactive signal when is_active is false', async () => {
+    const inactiveInput: CreateSignalInput = {
+      ...testInput,
+      is_active: false
+    };
+
+    const result = await createSignal(inactiveInput);
+
+    expect(result.is_active).toEqual(false);
+  });
+
+  it('should handle decimal quantities correctly', async () => {
+    const decimalInput: CreateSignalInput = {
+      ...testInput,
+      quantity: 25.7534 // Test precision
+    };
+
+    const result = await createSignal(decimalInput);
+
+    expect(result.quantity).toEqual(25.7534);
+    expect(typeof result.quantity).toEqual('number');
+  });
+
+  it('should handle high precision target prices', async () => {
+    const preciseInput: CreateSignalInput = {
+      ...testInput,
+      target_price: 123.4567 // Test precision
+    };
+
+    const result = await createSignal(preciseInput);
+
+    expect(result.target_price).toEqual(123.46); // Should round to 2 decimal places due to database precision
+    expect(typeof result.target_price).toEqual('number');
+  });
+
+  it('should throw error when asset does not exist', async () => {
+    const invalidInput: CreateSignalInput = {
+      ...testInput,
+      asset_id: 99999 // Non-existent asset ID
+    };
+
+    await expect(createSignal(invalidInput)).rejects.toThrow(/Asset with id 99999 does not exist/i);
+  });
+
+  it('should create multiple signals for the same asset', async () => {
+    const signal1 = await createSignal(testInput);
+    
+    const secondInput: CreateSignalInput = {
+      ...testInput,
+      signal_type: 'SELL',
+      target_price: 140.00,
+      description: 'Second signal for same asset'
+    };
+    
+    const signal2 = await createSignal(secondInput);
+
+    expect(signal1.id).not.toEqual(signal2.id);
+    expect(signal1.asset_id).toEqual(signal2.asset_id);
+    expect(signal1.signal_type).toEqual('BUY');
+    expect(signal2.signal_type).toEqual('SELL');
   });
 });

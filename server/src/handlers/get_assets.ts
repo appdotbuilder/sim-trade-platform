@@ -1,8 +1,21 @@
+import { db } from '../db';
+import { assetsTable } from '../db/schema';
 import { type Asset } from '../schema';
 
-export async function getAssets(): Promise<Asset[]> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is fetching all trading assets from the database.
-    // It should return a list of all available assets with their current prices.
-    return [];
-}
+export const getAssets = async (): Promise<Asset[]> => {
+  try {
+    // Fetch all assets from the database
+    const results = await db.select()
+      .from(assetsTable)
+      .execute();
+
+    // Convert numeric fields back to numbers before returning
+    return results.map(asset => ({
+      ...asset,
+      current_price: parseFloat(asset.current_price) // Convert string back to number
+    }));
+  } catch (error) {
+    console.error('Failed to fetch assets:', error);
+    throw error;
+  }
+};
